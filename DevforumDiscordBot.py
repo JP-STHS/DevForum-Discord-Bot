@@ -1,53 +1,54 @@
-import discord
 import os
 import requests
 import json
-from datetime import datetime
+import discord
+import asyncio
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = 1026891262953017455  # your channel
+CHANNEL_ID = 1026891262953017455  # replace with your Discord channel ID
 
-ANNOUNCEMENTS_URL = "https://devforum.roblox.com/c/updates/announcements/36.json"
-NEWS_URL = "https://devforum.roblox.com/c/updates/news-alerts/193.json"
+# DevForum categories
+CATEGORIES = [
+    "https://devforum.roblox.com/c/updates/announcements/36.json",
+    "https://devforum.roblox.com/c/updates/news-alerts/193.json"
+]
 
 SEEN_FILE = "seen.json"
 
-def load_seen():
-    if os.path.exists(SEEN_FILE):
-        return set(json.load(open(SEEN_FILE)))
-    return set()
+# Load seen topic IDs
+if os.path.exists(SEEN_FILE):
+    with open(SEEN_FILE, "r") as f:
+        seen = set(json.load(f))
+else:
+    seen = set()
 
-def save_seen(seen):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f)
+# Fetch topics from a category
+def fetch_topics(url):
+    data = requests.get(url).json()
+    topics = data["topic_list"]["topics"]
+    return [(t["id"], t["title"], f"https://devforum.roblox.com/t/{t['slug']}/{t['id']}") for t in topics]
 
-seen = load_seen()
-
-def get_topics(url):
-    res = requests.get(url).json()["topic_list"]["topics"]
-    return [(t["id"], t["title"], f"https://devforum.roblox.com/t/{t['slug']}/{t['id']}") for t in res]
-
-# gather all new
+# Collect new posts
 new_posts = []
-for url in [ANNOUNCEMENTS_URL, NEWS_URL]:
-    for tid, title, link in get_topics(url):
+for url in CATEGORIES:
+    for tid, title, link in fetch_topics(url):
         if tid not in seen:
             seen.add(tid)
             new_posts.append((title, link))
 
-save_seen(seen)
+# Save updated seen topics
+with open(SEEN_FILE, "w") as f:
+    json.dump(list(seen), f)
 
-# now post to Discord
-import discord
+# Send to Discord
+intents = discord.Intents.default()
+client = discord.Client(intents=intents)
 
-client = discord.Client(intents=discord.Intents.default())
-
-async def post():
+async def main():
     await client.login(TOKEN)
     channel = client.get_channel(CHANNEL_ID)
-    for title, link in reversed(new_posts):
+    for title, link in reversed(new_posts):  # oldest first
         await channel.send(f"📢 **{title}**\n{link}")
     await client.close()
 
-import asyncio
-asyncio.run(post())
+asyncio.run(main())
