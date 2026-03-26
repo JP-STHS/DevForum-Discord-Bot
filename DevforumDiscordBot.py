@@ -46,9 +46,13 @@ client = discord.Client(intents=intents)
 
 async def main():
     await client.login(TOKEN)
-    channel = client.get_channel(CHANNEL_ID)
-    for title, link in reversed(new_posts):  # oldest first
+    await client.connect()
+    
+    channel = await client.fetch_channel(CHANNEL_ID)  # fetch the channel via API
+
+    for title, link in reversed(new_posts):
         await channel.send(f"📢 **{title}**\n{link}")
+    
     await client.close()
 
 asyncio.run(main())
