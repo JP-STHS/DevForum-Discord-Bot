@@ -1,58 +1,81 @@
-import os
-import requests
-import json
 import discord
 import asyncio
+import json
+import os
+import aiohttp
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = 1026891262953017455  # replace with your Discord channel ID
+CHANNEL_ID = 1486815317307953366  # replace with your Discord channel ID
 
-# DevForum categories
+SEEN_FILE = "seen_topics.json"
+
+# DevForum categories to track
 CATEGORIES = [
     "https://devforum.roblox.com/c/updates/announcements/36.json",
     "https://devforum.roblox.com/c/updates/news-alerts/193.json"
 ]
 
-SEEN_FILE = "seen.json"
-
-# Load seen topic IDs
-if os.path.exists(SEEN_FILE):
-    with open(SEEN_FILE, "r") as f:
-        seen = set(json.load(f))
-else:
-    seen = set()
-
-# Fetch topics from a category
-def fetch_topics(url):
-    data = requests.get(url).json()
-    topics = data["topic_list"]["topics"]
-    return [(t["id"], t["title"], f"https://devforum.roblox.com/t/{t['slug']}/{t['id']}") for t in topics]
-
-# Collect new posts
-new_posts = []
-for url in CATEGORIES:
-    for tid, title, link in fetch_topics(url):
-        if tid not in seen:
-            seen.add(tid)
-            new_posts.append((title, link))
-
-# Save updated seen topics
-with open(SEEN_FILE, "w") as f:
-    json.dump(list(seen), f)
-
-# Send to Discord
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
+
+async def fetch_new_topics():
+    """Fetch latest topics and return new ones not in seen_topics.json"""
+    seen = set()
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            seen = set(json.load(f))
+
+    new_posts = []
+
+    async with aiohttp.ClientSession() as session:
+        for url in CATEGORIES:
+            async with session.get(url) as resp:
+                data = await resp.json()
+                for topic in data.get("topic_list", {}).get("topics", []):
+                    tid = topic.get("id")
+                    title = topic.get("title")
+                    link = f"https://devforum.roblox.com/t/{tid}"
+                    if tid not in seen:
+                        new_posts.append((title, link))
+                        seen.add(tid)
+
+    # save updated seen list
+    with open(SEEN_FILE, "w") as f:
+        json.dump(list(seen), f)
+
+    return new_posts
+
+
 async def main():
+    if not TOKEN:
+        raise ValueError("DISCORD_TOKEN not set")
+
     await client.login(TOKEN)
     await client.connect()
-    
-    channel = await client.fetch_channel(CHANNEL_ID)  # fetch the channel via API
+
+    # Fetch channel via API to avoid None
+    try:
+        channel = await client.fetch_channel(CHANNEL_ID)
+    except discord.Forbidden:
+        print("Bot does not have permission to access the channel")
+        await client.close()
+        return
+    except discord.NotFound:
+        print("Channel not found")
+        await client.close()
+        return
+
+    new_posts = await fetch_new_topics()
 
     for title, link in reversed(new_posts):
-        await channel.send(f"📢 **{title}**\n{link}")
-    
+        try:
+            await channel.send(f"📢 **{title}**\n{link}")
+        except discord.Forbidden:
+            print(f"Cannot send message to channel {CHANNEL_ID}")
+
     await client.close()
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
