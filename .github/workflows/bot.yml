@@ -27,4 +27,4 @@ jobs:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       run: |
-        python bot.py
+        python DevforumDiscordBot.py
