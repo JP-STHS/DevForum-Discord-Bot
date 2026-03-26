@@ -1,115 +1,53 @@
 import discord
-from discord.ext import commands, tasks
-import requests
-import logging
-from dotenv import load_dotenv
 import os
+import requests
 import json
-
-load_dotenv()
+from datetime import datetime
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-CHANNEL_ID = 1026891262953017455  # replace with your channel ID
+CHANNEL_ID = 1026891262953017455  # your channel
 
 ANNOUNCEMENTS_URL = "https://devforum.roblox.com/c/updates/announcements/36.json"
 NEWS_URL = "https://devforum.roblox.com/c/updates/news-alerts/193.json"
 
-SEEN_FILE = "seen_topics.json"
+SEEN_FILE = "seen.json"
 
-handler = logging.FileHandler(
-    filename="discord.log",
-    encoding="utf-8",
-    mode="w"
-)
-
-intents = discord.Intents.default()
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
-
-# Load seen topics
 def load_seen():
     if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r") as f:
-            return set(json.load(f))
+        return set(json.load(open(SEEN_FILE)))
     return set()
 
 def save_seen(seen):
     with open(SEEN_FILE, "w") as f:
         json.dump(list(seen), f)
 
-seen_topics = load_seen()
-
+seen = load_seen()
 
 def get_topics(url):
-    response = requests.get(url)
+    res = requests.get(url).json()["topic_list"]["topics"]
+    return [(t["id"], t["title"], f"https://devforum.roblox.com/t/{t['slug']}/{t['id']}") for t in res]
 
-    if response.status_code != 200:
-        print("Failed to fetch:", url)
-        return []
+# gather all new
+new_posts = []
+for url in [ANNOUNCEMENTS_URL, NEWS_URL]:
+    for tid, title, link in get_topics(url):
+        if tid not in seen:
+            seen.add(tid)
+            new_posts.append((title, link))
 
-    data = response.json()
+save_seen(seen)
 
-    topics = data["topic_list"]["topics"]
+# now post to Discord
+import discord
 
-    results = []
+client = discord.Client(intents=discord.Intents.default())
 
-    for topic in topics:
-        topic_id = topic["id"]
-        title = topic["title"]
-        slug = topic["slug"]
+async def post():
+    await client.login(TOKEN)
+    channel = client.get_channel(CHANNEL_ID)
+    for title, link in reversed(new_posts):
+        await channel.send(f"📢 **{title}**\n{link}")
+    await client.close()
 
-        link = f"https://devforum.roblox.com/t/{slug}/{topic_id}"
-
-        results.append((topic_id, title, link))
-
-    return results
-
-
-@tasks.loop(seconds=60)
-async def check_for_updates():
-
-    await bot.wait_until_ready()
-
-    channel = bot.get_channel(CHANNEL_ID)
-
-    urls = [
-        ANNOUNCEMENTS_URL,
-        NEWS_URL
-    ]
-
-    new_posts = []
-
-    for url in urls:
-        topics = get_topics(url)
-
-        for topic_id, title, link in topics:
-
-            if topic_id not in seen_topics:
-
-                seen_topics.add(topic_id)
-
-                new_posts.append((title, link))
-
-    if new_posts:
-
-        save_seen(seen_topics)
-
-        for title, link in reversed(new_posts):
-
-            message = f"📢 **New DevForum Post**\n{title}\n{link}"
-
-            await channel.send(message)
-
-
-@bot.event
-async def on_ready():
-
-    print("Bot is online")
-
-    check_for_updates.start()
-
-
-bot.run(TOKEN, log_handler=handler)
+import asyncio
+asyncio.run(post())
